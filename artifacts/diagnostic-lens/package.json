@@ -1,6 +1,6 @@
 {
   "name": "diagnostic-lens",
-  "displayName": "Diagnostic Lens",
+  "displayName": "Inline-Diagnostic",
   "description": "Enhances VS Code diagnostics with inline pill-shaped indicators showing errors, warnings, hints, and info.",
   "version": "0.1.0",
   "publisher": "diagnostic-lens",
@@ -23,7 +23,7 @@
   "main": "./out/extension.js",
   "contributes": {
     "configuration": {
-      "title": "Diagnostic Lens",
+      "title": "Inline-Diagnostic",
       "properties": {
         "diagnosticLens.enableErrors": {
           "type": "boolean",
