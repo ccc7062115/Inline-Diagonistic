@@ -5,7 +5,7 @@ A VS Code extension that enhances how diagnostics (errors, warnings, hints, info
 ## Features
 
 - **Inline pill indicators** appended at the end of every line with a diagnostic
-- An SVG arrow `→` precedes the pill, visually separating it from the code
+- An arrow `->` precedes the pill, visually separating it from the code
 - **Dot mode**: when your cursor is elsewhere, compact colored dots indicate the types of diagnostics present
 - **Message mode**: when your cursor is on a diagnostic line, the pill shows the highest-severity message (up to 30 characters, configurable)
 - **Color blending**: the pill background is blended with your editor's background — no harsh transparency artifacts
@@ -24,10 +24,6 @@ All settings are under `diagnosticLens.*`:
 | `enableInfo` | `true` | Show indicators for informational messages |
 | `pillTransparency` | `0.15` | Background blend intensity (0 = editor bg, 1 = full diagnostic color) |
 | `pillOpacity` | `0.9` | Visual opacity of the pill (0–1) |
-| `dotSize` | `12` | Size in pixels for diagnostic status dots |
-| `dotOpacity` | `1` | Visual opacity of diagnostic status dots (0–1) |
-| `arrowColor` | `#8a8a8a` | Color used for the inline arrow SVG |
-| `arrowOpacity` | `0.85` | Visual opacity of the inline arrow SVG (0–1) |
 | `maxMessageLength` | `30` | Max characters shown in message mode |
 
 ## Severity Colors

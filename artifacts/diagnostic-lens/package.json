@@ -59,32 +59,6 @@
           "maximum": 1,
           "description": "Visual opacity of the pill element (0 = invisible, 1 = fully visible)."
         },
-        "diagnosticLens.dotSize": {
-          "type": "number",
-          "default": 12,
-          "minimum": 4,
-          "maximum": 24,
-          "description": "Size in pixels for diagnostic status dots."
-        },
-        "diagnosticLens.dotOpacity": {
-          "type": "number",
-          "default": 1,
-          "minimum": 0,
-          "maximum": 1,
-          "description": "Visual opacity of diagnostic status dots (0 = invisible, 1 = fully visible)."
-        },
-        "diagnosticLens.arrowColor": {
-          "type": "string",
-          "default": "#8a8a8a",
-          "description": "Color used for the inline arrow SVG."
-        },
-        "diagnosticLens.arrowOpacity": {
-          "type": "number",
-          "default": 0.85,
-          "minimum": 0,
-          "maximum": 1,
-          "description": "Visual opacity of the inline arrow SVG (0 = invisible, 1 = fully visible)."
-        },
         "diagnosticLens.maxMessageLength": {
           "type": "number",
           "default": 30,
