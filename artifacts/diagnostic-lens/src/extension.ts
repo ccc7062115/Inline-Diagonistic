@@ -11,6 +11,10 @@ interface DiagnosticConfig {
   enableInfo: boolean;
   pillTransparency: number;
   pillOpacity: number;
+  dotSize: number;
+  dotOpacity: number;
+  arrowColor: string;
+  arrowOpacity: number;
   maxMessageLength: number;
 }
 
@@ -95,6 +99,22 @@ function toRgba(c: RGB, opacity: number): string {
   return `rgba(${c.r},${c.g},${c.b},${opacity})`;
 }
 
+function hexToRgba(hex: string, opacity: number): string {
+  const normalized = hex.replace('#', '');
+  const r = parseInt(normalized.slice(0, 2), 16);
+  const g = parseInt(normalized.slice(2, 4), 16);
+  const b = parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${opacity})`;
+}
+
+function escapeSvgAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 // Default editor background (dark). Blending keeps pill subtle by default.
 const EDITOR_BG: RGB = { r: 30, g: 30, b: 30 };
 
@@ -102,9 +122,20 @@ const EDITOR_BG: RGB = { r: 30, g: 30, b: 30 };
 // SVG glyph icon generation
 // --------------------------------------------------------------------------
 
-function makeDotSvgUri(color: string, opacity: number): vscode.Uri {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">` +
-    `<circle cx="8" cy="8" r="4" fill="${color}" opacity="${opacity}"/>` +
+function makeDotSvgUri(color: string, opacity: number, size: number): vscode.Uri {
+  const radius = Math.max(1, Math.min(16, size)) / 2;
+  const center = radius;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+    `<circle cx="${center}" cy="${center}" r="${radius}" fill="${escapeSvgAttribute(color)}" opacity="${opacity}"/>` +
+    `</svg>`;
+  return vscode.Uri.parse(
+    `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
+  );
+}
+
+function makeArrowSvgUri(color: string, opacity: number): vscode.Uri {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="16" viewBox="0 0 18 16" fill="none">` +
+    `<path d="M2 8H15M10 3L15 8L10 13" stroke="${escapeSvgAttribute(color)}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity}"/>` +
     `</svg>`;
   return vscode.Uri.parse(
     `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
@@ -170,6 +201,10 @@ function getConfig(): DiagnosticConfig {
     enableInfo:       cfg.get<boolean>('enableInfo', true),
     pillTransparency: cfg.get<number>('pillTransparency', 0.15),
     pillOpacity:      cfg.get<number>('pillOpacity', 0.9),
+    dotSize:          cfg.get<number>('dotSize', 12),
+    dotOpacity:       cfg.get<number>('dotOpacity', 1),
+    arrowColor:       cfg.get<string>('arrowColor', '#8a8a8a'),
+    arrowOpacity:     cfg.get<number>('arrowOpacity', 0.85),
     maxMessageLength: cfg.get<number>('maxMessageLength', 30),
   };
 }
@@ -218,13 +253,14 @@ function eolRange(line: number): vscode.Range {
 // Arrow decoration type (shared, created once per session)
 // --------------------------------------------------------------------------
 
-const ARROW_KEY = 'arrow';
-
-function getArrowType(): vscode.TextEditorDecorationType {
-  return getOrCreate(ARROW_KEY, () => ({
+function getArrowType(color: string, opacity: number): vscode.TextEditorDecorationType {
+  const key = `arrow|${color}|${opacity}`;
+  return getOrCreate(key, () => ({
     after: {
-      // plain arrow, no background, no border — purely separate from the pill
       margin: '0 0 0 6px',
+      contentIconPath: makeArrowSvgUri(color, opacity),
+      width: '1.15em',
+      height: '1em',
       fontStyle: 'normal',
       fontWeight: 'normal',
     },
@@ -236,13 +272,17 @@ function getArrowType(): vscode.TextEditorDecorationType {
 // Pill decoration type (one per blended-color + opacity combo)
 // --------------------------------------------------------------------------
 
-function getPillType(pillBgHex: string, pillOpacity: number): vscode.TextEditorDecorationType {
-  const key = `pill|${pillBgHex}|${pillOpacity}`;
+function getPillType(
+  pillBgHex: string,
+  pillOpacity: number,
+  mode: 'message' | 'dot',
+  dotSize: number
+): vscode.TextEditorDecorationType {
+  const key = `pill|${pillBgHex}|${pillOpacity}|${mode}|${dotSize}`;
+  const fontSize = mode === 'dot' ? ` font-size: ${dotSize}px; line-height: 1;` : '';
   return getOrCreate(key, () => ({
     after: {
-      // The textDecoration property is injected verbatim into CSS,
-      // allowing us to smuggle in border-radius and padding for the pill shape.
-      textDecoration: 'none; border-radius: 999px; padding: 1px 7px;',
+      textDecoration: `none; border-radius: 999px; padding: 1px 10px;${fontSize}`,
       margin: '0 0 0 4px',
       fontStyle: 'normal',
       fontWeight: 'normal',
@@ -257,13 +297,14 @@ function getPillType(pillBgHex: string, pillOpacity: number): vscode.TextEditorD
 
 function getGutterType(
   severity: vscode.DiagnosticSeverity,
-  opacity: number
+  opacity: number,
+  size: number
 ): vscode.TextEditorDecorationType {
   const color = toHex(SEVERITY_COLORS[severity]);
-  const key = `gutter|${color}|${opacity}`;
+  const key = `gutter|${color}|${opacity}|${size}`;
   return getOrCreate(key, () => ({
-    gutterIconPath: makeDotSvgUri(color, opacity),
-    gutterIconSize: '60%',
+    gutterIconPath: makeDotSvgUri(color, opacity, size),
+    gutterIconSize: `${size}px`,
     rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
   }));
 }
@@ -280,16 +321,17 @@ function applyDecorations(
 ): void {
   // We batch ranges per style key to minimise decoration type count.
   //
-  // Layer 1 – Arrow (" -> "):  one shared type, contentText set per-range
+  // Layer 1 – Arrow SVG:       one shared type for configured arrow style
   // Layer 2 – Pill (dots/msg): one type per blended color, contentText per-range
   // Layer 3 – Gutter dot:      one type per severity (max 4)
 
   type BatchEntry = { ranges: vscode.DecorationOptions[] };
 
   const arrowBatch: vscode.DecorationOptions[] = [];
+  const arrowKey = `arrow|${cfg.arrowColor}|${cfg.arrowOpacity}`;
 
-  // pill batches keyed by pillBgHex|pillOpacity
-  const pillBatches  = new Map<string, BatchEntry & { bgHex: string; opacity: number }>();
+  // pill batches keyed by pillBgHex|pillOpacity|mode|dotSize
+  const pillBatches  = new Map<string, BatchEntry & { bgHex: string; opacity: number; mode: 'message' | 'dot'; dotSize: number }>();
 
   // gutter batches keyed by DiagnosticSeverity
   const gutterBatches = new Map<vscode.DiagnosticSeverity, vscode.DecorationOptions[]>();
@@ -306,12 +348,6 @@ function applyDecorations(
     // ── Arrow ────────────────────────────────────────────────────────────
     arrowBatch.push({
       range: eolRange(line),
-      renderOptions: {
-        after: {
-          contentText: '->',
-          color: new vscode.ThemeColor('editorInlayHint.foreground'),
-        },
-      },
     });
 
     // ── Pill ─────────────────────────────────────────────────────────────
@@ -330,16 +366,17 @@ function applyDecorations(
         .join(' ');
     }
 
-    const pillKey = `${bgHex}|${cfg.pillOpacity}`;
+    const mode = isActive ? 'message' : 'dot';
+    const pillKey = `${bgHex}|${cfg.pillOpacity}|${mode}|${cfg.dotSize}`;
     if (!pillBatches.has(pillKey)) {
-      pillBatches.set(pillKey, { ranges: [], bgHex, opacity: cfg.pillOpacity });
+      pillBatches.set(pillKey, { ranges: [], bgHex, opacity: cfg.pillOpacity, mode, dotSize: cfg.dotSize });
     }
     pillBatches.get(pillKey)!.ranges.push({
       range: eolRange(line),
       renderOptions: {
         after: {
           contentText: pillContent,
-          color: textColor,
+          color: isActive ? textColor : hexToRgba(textColor, cfg.dotOpacity),
           backgroundColor: bgRgba,
         },
       },
@@ -356,22 +393,22 @@ function applyDecorations(
   }
 
   // ── Apply Arrow ──────────────────────────────────────────────────────────
-  const arrowType = getArrowType();
+  const arrowType = getArrowType(cfg.arrowColor, cfg.arrowOpacity);
   editor.setDecorations(arrowType, arrowBatch);
-  recordApplied(editor, ARROW_KEY);
+  recordApplied(editor, arrowKey);
 
   // ── Apply Pills ──────────────────────────────────────────────────────────
-  for (const [pillKey, { ranges, bgHex, opacity }] of pillBatches) {
-    const pillType = getPillType(bgHex, opacity);
+  for (const [pillKey, { ranges, bgHex, opacity, mode, dotSize }] of pillBatches) {
+    const pillType = getPillType(bgHex, opacity, mode, dotSize);
     editor.setDecorations(pillType, ranges);
-    recordApplied(editor, `pill|${bgHex}|${opacity}`);
+    recordApplied(editor, pillKey);
   }
 
   // ── Apply Gutter dots ────────────────────────────────────────────────────
   for (const [severity, ranges] of gutterBatches) {
-    const gutterType = getGutterType(severity, cfg.pillOpacity);
+    const gutterType = getGutterType(severity, cfg.dotOpacity, cfg.dotSize);
     editor.setDecorations(gutterType, ranges);
-    recordApplied(editor, `gutter|${toHex(SEVERITY_COLORS[severity])}|${cfg.pillOpacity}`);
+    recordApplied(editor, `gutter|${toHex(SEVERITY_COLORS[severity])}|${cfg.dotOpacity}|${cfg.dotSize}`);
   }
 }
 
