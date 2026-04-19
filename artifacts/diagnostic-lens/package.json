@@ -2,7 +2,7 @@
   "name": "diagnostic-lens",
   "displayName": "Inline-Diagnostic",
   "description": "Enhances VS Code diagnostics with inline pill-shaped indicators showing errors, warnings, hints, and info.",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "publisher": "diagnostic-lens",
   "engines": {
     "vscode": "^1.85.0"
@@ -50,7 +50,7 @@
           "default": 0.15,
           "minimum": 0,
           "maximum": 1,
-          "description": "Background blending intensity for the pill (0 = editor background, 1 = full diagnostic color)."
+          "description": "Background blending intensity for the pill (0 = fully blended with editor background, 1 = full diagnostic color)."
         },
         "diagnosticLens.pillOpacity": {
           "type": "number",
@@ -65,32 +65,6 @@
           "minimum": 10,
           "maximum": 200,
           "description": "Maximum number of characters to display in the inline message."
-        },
-        "diagnosticLens.dotSize": {
-          "type": "number",
-          "default": 1.0,
-          "minimum": 0.5,
-          "maximum": 3.0,
-          "description": "Scale factor for diagnostic dots — applies to both glyph margin dots and inline pill dots (1.0 = default size)."
-        },
-        "diagnosticLens.dotOpacity": {
-          "type": "number",
-          "default": 0.85,
-          "minimum": 0,
-          "maximum": 1,
-          "description": "Opacity for all diagnostic dots (glyph margin and inline pill dots)."
-        },
-        "diagnosticLens.arrowColor": {
-          "type": "string",
-          "default": "",
-          "description": "Custom color for the arrow indicator, as a hex value (e.g. #888888). Leave empty to use the editor's muted foreground color."
-        },
-        "diagnosticLens.arrowOpacity": {
-          "type": "number",
-          "default": 0.55,
-          "minimum": 0,
-          "maximum": 1,
-          "description": "Opacity of the arrow indicator (0 = invisible, 1 = fully opaque)."
         }
       }
     }
