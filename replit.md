@@ -4,6 +4,16 @@
 
 pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
 
+## Artifacts
+
+### Diagnostic Lens (`artifacts/diagnostic-lens/`)
+A VS Code extension that adds inline pill-shaped diagnostic indicators.
+- **Entry**: `src/extension.ts`
+- **Output**: `out/extension.js` (compiled), `diagnostic-lens-0.1.0.vsix` (installable package)
+- **Build**: `pnpm run compile` (inside `artifacts/diagnostic-lens/`)
+- **Package**: `pnpm exec vsce package --no-dependencies --allow-missing-repository`
+- **Config namespace**: `diagnosticLens.*`
+
 ## Stack
 
 - **Monorepo tool**: pnpm workspaces

@@ -1,0 +1,85 @@
+Create a Visual Studio Code extension that enhances how diagnostics (errors, warnings, hints, etc.) are visually presented directly within the editor using inline UI elements, without altering the existing editor layout or behavior.
+
+Core UI Behavior
+Inline Indicator Placement
+For any line containing one or more diagnostics:
+Append a right-aligned inline indicator at the end of the line.
+The indicator must consist of:
+A plain text arrow: ->
+Followed immediately by a rounded pill-shaped UI element (the “message pill”).
+The -> must remain visually separate from the pill (not inside it).
+Message Pill Behavior
+When Cursor is NOT on the Diagnostic Line
+The pill should display minimal indicator dots representing diagnostics:
+Each dot corresponds to a diagnostic type (error, warning, hint, etc.).
+Dot colors must match the respective diagnostic severity colors.
+If multiple diagnostic types exist:
+The pill background color must reflect the highest severity:
+Error > Warning > Hint > Info
+When Cursor IS on the Diagnostic Line
+The pill should display the diagnostic message text instead of dots.
+If multiple diagnostics exist on the same line:
+Display only the highest severity message.
+Message Length Handling
+Maximum visible message length: 30 characters (including spaces).
+If the message exceeds this limit:
+Truncate to 30 characters
+Append ... at the end
+Appearance and Styling
+Pill Shape and Layout
+Must have rounded edges
+Must appear as a compact inline element
+Must not affect line height, spacing, or layout
+Must not shift or resize any editor content
+Transparency and Background Blending
+The pill must simulate transparency by:
+Fetching the current editor background color
+Blending it with the diagnostic color
+Do NOT use actual transparency (alpha-based rendering)
+Opacity Behavior
+The pill opacity must be configurable
+If opacity is set to:
+0 → simulate full transparency via color blending only
+>0 → apply visual opacity effect
+The text color inside the pill must dynamically adjust to ensure:
+High readability
+Proper contrast against the pill background
+Line Wrapping Compatibility
+The inline arrow and pill must:
+Respect VS Code’s line wrapping behavior
+Remain visually attached to the logical end of the line
+Not break layout or overlap wrapped text
+Configuration Options (User Settings)
+
+Expose the following configurable options:
+
+Toggle Diagnostic Types
+Enable/disable display for:
+Errors
+Warnings
+Hints
+Info
+Pill Transparency Level
+Adjustable value controlling background blending intensity
+Pill Opacity
+Adjustable from 0 to 1
+Affects visual prominence of the pill
+Compatibility Requirements
+Must support diagnostics from:
+VS Code core
+All extensions (e.g., rust-analyzer, GCC integrations, Python tools, etc.)
+Must work consistently across all file types and languages
+Must not interfere with:
+Default editor behavior
+Existing decorations (underlines, squiggles, etc.)
+Cursor movement or selection
+Constraints
+The extension must:
+Not modify or reflow editor text
+Not introduce layout shifts
+Not degrade editor performance
+Preserve all default VS Code interactions
+Project Initialization Requirement
+The extension project must be initialized using the official scaffolding tool:
+yo code
+Follow standard VS Code extension structure before implementing UI features

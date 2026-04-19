@@ -1,0 +1,84 @@
+{
+  "name": "diagnostic-lens",
+  "displayName": "Diagnostic Lens",
+  "description": "Enhances VS Code diagnostics with inline pill-shaped indicators showing errors, warnings, hints, and info.",
+  "version": "0.1.0",
+  "publisher": "diagnostic-lens",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "diagnostics",
+    "errors",
+    "warnings",
+    "inline",
+    "decorations"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Diagnostic Lens",
+      "properties": {
+        "diagnosticLens.enableErrors": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline indicators for errors."
+        },
+        "diagnosticLens.enableWarnings": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline indicators for warnings."
+        },
+        "diagnosticLens.enableHints": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline indicators for hints."
+        },
+        "diagnosticLens.enableInfo": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline indicators for informational messages."
+        },
+        "diagnosticLens.pillTransparency": {
+          "type": "number",
+          "default": 0.15,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Background blending intensity for the pill (0 = fully blended with editor background, 1 = full diagnostic color)."
+        },
+        "diagnosticLens.pillOpacity": {
+          "type": "number",
+          "default": 0.9,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Visual opacity of the pill element (0 = invisible, 1 = fully visible)."
+        },
+        "diagnosticLens.maxMessageLength": {
+          "type": "number",
+          "default": 30,
+          "minimum": 10,
+          "maximum": 200,
+          "description": "Maximum number of characters to display in the inline message."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}
