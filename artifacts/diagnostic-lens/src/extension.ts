@@ -137,24 +137,34 @@ function clearDecorationCache(): void {
 // Per-editor active decoration key tracking
 // --------------------------------------------------------------------------
 
-/** Maps editor URI → set of cache keys currently applied to it */
-const editorApplied = new Map<string, Set<string>>();
+const editorApplied = new WeakMap<vscode.TextEditor, Set<string>>();
+const pendingClearTimers = new WeakMap<vscode.TextEditor, ReturnType<typeof setTimeout>>();
 
-function clearEditorDecorations(editor: vscode.TextEditor): void {
-  const uri = editor.document.uri.toString();
-  const keys = editorApplied.get(uri);
+function clearEditorDecorations(editor: vscode.TextEditor, nextKeys: Set<string> = new Set()): void {
+  const keys = editorApplied.get(editor);
   if (!keys) { return; }
   for (const key of keys) {
+    if (nextKeys.has(key)) { continue; }
     const dt = decorationCache.get(key);
     if (dt) { editor.setDecorations(dt, []); }
   }
-  keys.clear();
+  editorApplied.set(editor, nextKeys);
 }
 
-function recordApplied(editor: vscode.TextEditor, key: string): void {
-  const uri = editor.document.uri.toString();
-  if (!editorApplied.has(uri)) { editorApplied.set(uri, new Set()); }
-  editorApplied.get(uri)!.add(key);
+function cancelPendingClear(editor: vscode.TextEditor): void {
+  const timer = pendingClearTimers.get(editor);
+  if (!timer) { return; }
+  clearTimeout(timer);
+  pendingClearTimers.delete(editor);
+}
+
+function scheduleEditorClear(editor: vscode.TextEditor): void {
+  cancelPendingClear(editor);
+  const timer = setTimeout(() => {
+    pendingClearTimers.delete(editor);
+    clearEditorDecorations(editor);
+  }, 150);
+  pendingClearTimers.set(editor, timer);
 }
 
 // --------------------------------------------------------------------------
@@ -277,15 +287,18 @@ function applyDecorations(
   lineMap: LineMap,
   activeLine: number,
   cfg: DiagnosticConfig
-): void {
+): Set<string> {
   // We batch ranges per style key to minimise decoration type count.
   //
   // Layer 1 – Arrow (" -> "):  one shared type, contentText set per-range
   // Layer 2 – Pill (dots/msg): one type per blended color, contentText per-range
   // Layer 3 – Gutter dot:      one type per severity (max 4)
 
+  cancelPendingClear(editor);
+
   type BatchEntry = { ranges: vscode.DecorationOptions[] };
 
+  const appliedKeys = new Set<string>();
   const arrowBatch: vscode.DecorationOptions[] = [];
 
   // pill batches keyed by pillBgHex|pillOpacity
@@ -358,21 +371,24 @@ function applyDecorations(
   // ── Apply Arrow ──────────────────────────────────────────────────────────
   const arrowType = getArrowType();
   editor.setDecorations(arrowType, arrowBatch);
-  recordApplied(editor, ARROW_KEY);
+  appliedKeys.add(ARROW_KEY);
 
   // ── Apply Pills ──────────────────────────────────────────────────────────
   for (const [pillKey, { ranges, bgHex, opacity }] of pillBatches) {
     const pillType = getPillType(bgHex, opacity);
     editor.setDecorations(pillType, ranges);
-    recordApplied(editor, `pill|${bgHex}|${opacity}`);
+    appliedKeys.add(`pill|${pillKey}`);
   }
 
   // ── Apply Gutter dots ────────────────────────────────────────────────────
   for (const [severity, ranges] of gutterBatches) {
     const gutterType = getGutterType(severity, cfg.pillOpacity);
     editor.setDecorations(gutterType, ranges);
-    recordApplied(editor, `gutter|${toHex(SEVERITY_COLORS[severity])}|${cfg.pillOpacity}`);
+    appliedKeys.add(`gutter|${toHex(SEVERITY_COLORS[severity])}|${cfg.pillOpacity}`);
   }
+
+  clearEditorDecorations(editor, appliedKeys);
+  return appliedKeys;
 }
 
 // --------------------------------------------------------------------------
@@ -386,12 +402,16 @@ function updateEditor(editor: vscode.TextEditor | undefined): void {
   const diags      = vscode.languages.getDiagnostics(editor.document.uri);
   const activeLine = editor.selection.active.line;
 
-  clearEditorDecorations(editor);
-
-  if (diags.length === 0) { return; }
+  if (diags.length === 0) {
+    scheduleEditorClear(editor);
+    return;
+  }
 
   const lineMap = buildLineMap(diags, cfg);
-  if (lineMap.size === 0) { return; }
+  if (lineMap.size === 0) {
+    scheduleEditorClear(editor);
+    return;
+  }
 
   applyDecorations(editor, lineMap, activeLine, cfg);
 }
@@ -454,7 +474,6 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('diagnosticLens')) {
         clearDecorationCache();
-        editorApplied.clear();
         for (const editor of vscode.window.visibleTextEditors) {
           updateEditor(editor);
         }
@@ -465,5 +484,4 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   clearDecorationCache();
-  editorApplied.clear();
 }
