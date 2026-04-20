@@ -139,6 +139,7 @@ function clearDecorationCache(): void {
 
 /** Maps editor URI → set of cache keys currently applied to it */
 const editorApplied = new Map<string, Set<string>>();
+const pendingDiagnosticRefresh = new Set<string>();
 
 function clearEditorDecorations(editor: vscode.TextEditor): void {
   const uri = editor.document.uri.toString();
@@ -401,6 +402,8 @@ function applyDecorations(
 
 function updateEditor(editor: vscode.TextEditor | undefined): void {
   if (!editor) { return; }
+  const uri = editor.document.uri.toString();
+  if (pendingDiagnosticRefresh.has(uri)) { return; }
 
   const cfg        = getConfig();
   const diags      = vscode.languages.getDiagnostics(editor.document.uri);
@@ -449,6 +452,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.languages.onDidChangeDiagnostics(e => {
+      for (const uri of e.uris) {
+        pendingDiagnosticRefresh.delete(uri.toString());
+      }
       for (const editor of vscode.window.visibleTextEditors) {
         if (e.uris.some(u => u.toString() === editor.document.uri.toString())) {
           debouncedUpdate(editor);
@@ -469,10 +475,21 @@ export function activate(context: vscode.ExtensionContext): void {
       for (const editor of editors) { debouncedUpdate(editor); }
     }),
 
+    vscode.workspace.onDidChangeTextDocument(e => {
+      const uri = e.document.uri.toString();
+      pendingDiagnosticRefresh.add(uri);
+      for (const editor of vscode.window.visibleTextEditors) {
+        if (editor.document.uri.toString() === uri) {
+          clearEditorDecorations(editor);
+        }
+      }
+    }),
+
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('diagnosticLens')) {
         clearDecorationCache();
         editorApplied.clear();
+        pendingDiagnosticRefresh.clear();
         for (const editor of vscode.window.visibleTextEditors) {
           updateEditor(editor);
         }
@@ -484,4 +501,5 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void {
   clearDecorationCache();
   editorApplied.clear();
+  pendingDiagnosticRefresh.clear();
 }
