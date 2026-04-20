@@ -22,6 +22,11 @@ interface RGB {
   b: number;
 }
 
+interface PillVisualState {
+  lineLength: number;
+  contentLength: number;
+}
+
 // --------------------------------------------------------------------------
 // Severity constants
 // --------------------------------------------------------------------------
@@ -101,6 +106,14 @@ function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function cssNumber(value: number): string {
+  return Number(value.toFixed(3)).toString();
+}
+
 // Default editor background (dark). Blending keeps pill subtle by default.
 const EDITOR_BG: RGB = { r: 30, g: 30, b: 30 };
 
@@ -139,15 +152,33 @@ function clearDecorationCache(): void {
   decorationCache.clear();
 }
 
+function clearPillAnimationState(): void {
+  for (const timer of pillAnimationTimers.values()) {
+    clearTimeout(timer);
+  }
+  pillVisualState.clear();
+  pillAnimationTimers.clear();
+  pillAnimationSeq.clear();
+}
+
 // --------------------------------------------------------------------------
 // Per-editor active decoration key tracking
 // --------------------------------------------------------------------------
 
 /** Maps editor URI → set of cache keys currently applied to it */
 const editorApplied = new Map<string, Set<string>>();
+const pillVisualState = new Map<string, Map<number, PillVisualState>>();
+const pillAnimationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const pillAnimationSeq = new Map<string, number>();
 
 function clearEditorDecorations(editor: vscode.TextEditor): void {
   const uri = editor.document.uri.toString();
+  const timer = pillAnimationTimers.get(uri);
+  if (timer) {
+    clearTimeout(timer);
+    pillAnimationTimers.delete(uri);
+  }
+  pillVisualState.delete(uri);
   const keys = editorApplied.get(uri);
   if (!keys) { return; }
   for (const key of keys) {
@@ -248,13 +279,53 @@ function getPillType(pillBgHex: string, pillOpacity: number): vscode.TextEditorD
   const key = `pill|${pillBgHex}|${pillOpacity}`;
   return getOrCreate(key, () => ({
     after: {
-      textDecoration: 'none; border-radius: 999px; padding: 1px 7px; transition: opacity 180ms ease, background-color 180ms ease, color 180ms ease, margin 180ms ease, transform 180ms ease;',
+      textDecoration: pillDecorationCss(0, 1, 1),
       margin: '0 0 0 4px',
       fontStyle: 'normal',
       fontWeight: 'normal',
     },
     rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
   }));
+}
+
+function pillDecorationCss(translateCh: number, scaleX: number, opacity: number): string {
+  return [
+    'none',
+    'display: inline-block',
+    'box-sizing: border-box',
+    'border-radius: 999px',
+    'padding: 1px 7px',
+    'transform-origin: left center',
+    'backface-visibility: hidden',
+    'will-change: transform, opacity',
+    `opacity: ${cssNumber(opacity)}`,
+    `transform: translate3d(${cssNumber(translateCh)}ch, 0, 0) scaleX(${cssNumber(scaleX)})`,
+    'transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms ease-in-out, background-color 180ms ease-in-out, color 180ms ease-in-out',
+  ].join('; ') + ';';
+}
+
+function getPillMotion(
+  previous: PillVisualState | undefined,
+  lineLength: number,
+  contentLength: number
+): { initialTranslateCh: number; initialScaleX: number; initialOpacity: number } {
+  if (!previous) {
+    return {
+      initialTranslateCh: 0,
+      initialScaleX: 0.92,
+      initialOpacity: 0,
+    };
+  }
+
+  const lengthDelta = previous.lineLength - lineLength;
+  const previousContentLength = Math.max(previous.contentLength, 1);
+  const nextContentLength = Math.max(contentLength, 1);
+
+  return {
+    initialTranslateCh: clamp(lengthDelta, -40, 40),
+    initialScaleX: clamp(previousContentLength / nextContentLength, 0.72, 1.34),
+    initialOpacity: 1,
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -292,10 +363,22 @@ function applyDecorations(
 
   type BatchEntry = { ranges: vscode.DecorationOptions[] };
 
+  const uri = editor.document.uri.toString();
+  const previousVisualState = pillVisualState.get(uri) ?? new Map<number, PillVisualState>();
+  const nextVisualState = new Map<number, PillVisualState>();
+  const sequence = (pillAnimationSeq.get(uri) ?? 0) + 1;
+  pillAnimationSeq.set(uri, sequence);
+
+  const existingTimer = pillAnimationTimers.get(uri);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+    pillAnimationTimers.delete(uri);
+  }
+
   const arrowBatch: vscode.DecorationOptions[] = [];
 
   // pill batches keyed by pillBgHex|pillOpacity
-  const pillBatches  = new Map<string, BatchEntry & { bgHex: string; opacity: number }>();
+  const pillBatches  = new Map<string, BatchEntry & { settledRanges: vscode.DecorationOptions[]; bgHex: string; opacity: number }>();
 
   // gutter batches keyed by DiagnosticSeverity
   const gutterBatches = new Map<vscode.DiagnosticSeverity, vscode.DecorationOptions[]>();
@@ -308,6 +391,7 @@ function applyDecorations(
     const bgHex     = toHex(blended);
     const bgRgba    = toRgba(blended, cfg.pillOpacity);
     const textColor = bestTextColor(blended);
+    const lineLength = editor.document.lineAt(line).text.length;
 
     // ── Arrow ────────────────────────────────────────────────────────────
     arrowBatch.push({
@@ -336,19 +420,42 @@ function applyDecorations(
         .join(' ');
     }
 
+    const pillMotion = getPillMotion(previousVisualState.get(line), lineLength, pillContent.length);
     const pillKey = `${bgHex}|${cfg.pillOpacity}`;
     if (!pillBatches.has(pillKey)) {
-      pillBatches.set(pillKey, { ranges: [], bgHex, opacity: cfg.pillOpacity });
+      pillBatches.set(pillKey, { ranges: [], settledRanges: [], bgHex, opacity: cfg.pillOpacity });
     }
-    pillBatches.get(pillKey)!.ranges.push({
+    const pillOptions = {
       range: eolRange(line),
       renderOptions: {
         after: {
           contentText: pillContent,
           color: textColor,
           backgroundColor: bgRgba,
+          textDecoration: pillDecorationCss(
+            pillMotion.initialTranslateCh,
+            pillMotion.initialScaleX,
+            pillMotion.initialOpacity
+          ),
         },
       },
+    };
+    const settledPillOptions = {
+      range: eolRange(line),
+      renderOptions: {
+        after: {
+          contentText: pillContent,
+          color: textColor,
+          backgroundColor: bgRgba,
+          textDecoration: pillDecorationCss(0, 1, 1),
+        },
+      },
+    };
+    pillBatches.get(pillKey)!.ranges.push(pillOptions);
+    pillBatches.get(pillKey)!.settledRanges.push(settledPillOptions);
+    nextVisualState.set(line, {
+      lineLength,
+      contentLength: pillContent.length,
     });
 
     if (cfg.enableGlyphMarginDots) {
@@ -393,6 +500,18 @@ function applyDecorations(
   for (const key of nextKeys) {
     recordApplied(editor, key);
   }
+
+  pillVisualState.set(uri, nextVisualState);
+
+  const settleTimer = setTimeout(() => {
+    if (pillAnimationSeq.get(uri) !== sequence) { return; }
+    for (const { settledRanges, bgHex, opacity } of pillBatches.values()) {
+      const pillType = getPillType(bgHex, opacity);
+      editor.setDecorations(pillType, settledRanges);
+    }
+    pillAnimationTimers.delete(uri);
+  }, 16);
+  pillAnimationTimers.set(uri, settleTimer);
 }
 
 // --------------------------------------------------------------------------
@@ -478,6 +597,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('diagnosticLens')) {
         clearDecorationCache();
+        clearPillAnimationState();
         editorApplied.clear();
         for (const editor of vscode.window.visibleTextEditors) {
           updateEditor(editor);
@@ -489,5 +609,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   clearDecorationCache();
+  clearPillAnimationState();
   editorApplied.clear();
 }

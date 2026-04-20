@@ -15,6 +15,7 @@ A VS Code extension that adds inline pill-shaped diagnostic indicators.
 - **Package**: `pnpm exec vsce package --no-dependencies --allow-missing-repository`
 - **Config namespace**: `diagnosticLens.*`
 - **Glyph margin settings**: `diagnosticLens.enableGlyphMarginDots`, `diagnosticLens.glyphDotOpacity`
+- **Inline pill animation**: stateful transform/opacity animation smooths movement and content-length changes without animating width/left.
 
 ## Stack
 
