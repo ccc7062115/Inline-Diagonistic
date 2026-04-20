@@ -139,6 +139,7 @@ function clearDecorationCache(): void {
 
 const editorApplied = new WeakMap<vscode.TextEditor, Set<string>>();
 const pendingClearVersions = new WeakMap<vscode.TextEditor, number>();
+const editorLineMaps = new WeakMap<vscode.TextEditor, LineMap>();
 
 function clearEditorDecorations(editor: vscode.TextEditor, nextKeys: Set<string> = new Set()): void {
   const keys = editorApplied.get(editor);
@@ -214,6 +215,45 @@ function buildLineMap(diags: readonly vscode.Diagnostic[], cfg: DiagnosticConfig
     if (!entry.severities.includes(diag.severity)) { entry.severities.push(diag.severity); }
   }
   return map;
+}
+
+function shiftLineMap(lineMap: LineMap, changes: readonly vscode.TextDocumentContentChangeEvent[]): LineMap {
+  let shifted = lineMap;
+  for (const change of changes) {
+    const oldLineSpan = change.range.end.line - change.range.start.line;
+    const newLineSpan = change.text.split(/\r\n|\r|\n/).length - 1;
+    const delta = newLineSpan - oldLineSpan;
+    if (delta === 0) { continue; }
+
+    const next: LineMap = new Map();
+    for (const [line, entry] of shifted) {
+      let nextLine = line;
+      if (line > change.range.end.line) {
+        nextLine = line + delta;
+      } else if (
+        delta > 0 &&
+        change.range.isEmpty &&
+        line === change.range.start.line &&
+        entry.diagnostics.some(diag => change.range.start.character <= diag.range.start.character)
+      ) {
+        nextLine = line + delta;
+      } else if (line > change.range.start.line) {
+        nextLine = Math.max(0, change.range.start.line);
+      }
+      if (!next.has(nextLine)) {
+        next.set(nextLine, { diagnostics: [], severities: [] });
+      }
+      const nextEntry = next.get(nextLine)!;
+      nextEntry.diagnostics.push(...entry.diagnostics);
+      for (const severity of entry.severities) {
+        if (!nextEntry.severities.includes(severity)) {
+          nextEntry.severities.push(severity);
+        }
+      }
+    }
+    shifted = next;
+  }
+  return shifted;
 }
 
 // End-of-line anchor range for a given line
@@ -400,17 +440,41 @@ function updateEditor(editor: vscode.TextEditor | undefined): void {
   const activeLine = editor.selection.active.line;
 
   if (diags.length === 0) {
+    editorLineMaps.delete(editor);
     scheduleEditorClear(editor);
     return;
   }
 
   const lineMap = buildLineMap(diags, cfg);
   if (lineMap.size === 0) {
+    editorLineMaps.delete(editor);
     scheduleEditorClear(editor);
     return;
   }
 
+  editorLineMaps.set(editor, lineMap);
   applyDecorations(editor, lineMap, activeLine, cfg);
+}
+
+function updateEditorFromCache(editor: vscode.TextEditor | undefined): void {
+  if (!editor) { return; }
+  const lineMap = editorLineMaps.get(editor);
+  if (!lineMap) {
+    updateEditor(editor);
+    return;
+  }
+  applyDecorations(editor, lineMap, editor.selection.active.line, getConfig());
+}
+
+function shiftEditorForDocumentChange(
+  editor: vscode.TextEditor,
+  changes: readonly vscode.TextDocumentContentChangeEvent[]
+): void {
+  const lineMap = editorLineMaps.get(editor);
+  if (!lineMap) { return; }
+  const shifted = shiftLineMap(lineMap, changes);
+  editorLineMaps.set(editor, shifted);
+  applyDecorations(editor, shifted, editor.selection.active.line, getConfig());
 }
 
 // --------------------------------------------------------------------------
@@ -433,12 +497,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     vscode.window.onDidChangeActiveTextEditor(editor => {
-      updateEditor(editor);
+      updateEditorFromCache(editor);
     }),
 
     // Cursor movement → active line may change → pill content changes
     vscode.window.onDidChangeTextEditorSelection(e => {
-      updateEditor(e.textEditor);
+      updateEditorFromCache(e.textEditor);
     }),
 
     vscode.window.onDidChangeVisibleTextEditors(editors => {
@@ -446,10 +510,11 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     vscode.workspace.onDidChangeTextDocument(e => {
-      const editor = vscode.window.visibleTextEditors.find(
-        ed => ed.document.uri.toString() === e.document.uri.toString()
-      );
-      if (editor) { updateEditor(editor); }
+      for (const editor of vscode.window.visibleTextEditors) {
+        if (editor.document.uri.toString() === e.document.uri.toString()) {
+          shiftEditorForDocumentChange(editor, e.contentChanges);
+        }
+      }
     }),
 
     vscode.workspace.onDidChangeConfiguration(e => {
