@@ -151,6 +151,18 @@ function clearEditorDecorations(editor: vscode.TextEditor): void {
   keys.clear();
 }
 
+function clearStaleEditorDecorations(editor: vscode.TextEditor, nextKeys: Set<string>): void {
+  const uri = editor.document.uri.toString();
+  const keys = editorApplied.get(uri);
+  if (!keys) { return; }
+  for (const key of keys) {
+    if (nextKeys.has(key)) { continue; }
+    const dt = decorationCache.get(key);
+    if (dt) { editor.setDecorations(dt, []); }
+    keys.delete(key);
+  }
+}
+
 function recordApplied(editor: vscode.TextEditor, key: string): void {
   const uri = editor.document.uri.toString();
   if (!editorApplied.has(uri)) { editorApplied.set(uri, new Set()); }
@@ -277,7 +289,7 @@ function applyDecorations(
   lineMap: LineMap,
   activeLine: number,
   cfg: DiagnosticConfig
-): void {
+): Set<string> {
   // We batch ranges per style key to minimise decoration type count.
   //
   // Layer 1 – Arrow (" -> "):  one shared type, contentText set per-range
@@ -287,6 +299,7 @@ function applyDecorations(
   type BatchEntry = { ranges: vscode.DecorationOptions[] };
 
   const arrowBatch: vscode.DecorationOptions[] = [];
+  const nextKeys = new Set<string>();
 
   // pill batches keyed by pillBgHex|pillOpacity
   const pillBatches  = new Map<string, BatchEntry & { bgHex: string; opacity: number }>();
@@ -359,20 +372,27 @@ function applyDecorations(
   const arrowType = getArrowType();
   editor.setDecorations(arrowType, arrowBatch);
   recordApplied(editor, ARROW_KEY);
+  nextKeys.add(ARROW_KEY);
 
   // ── Apply Pills ──────────────────────────────────────────────────────────
   for (const [pillKey, { ranges, bgHex, opacity }] of pillBatches) {
     const pillType = getPillType(bgHex, opacity);
     editor.setDecorations(pillType, ranges);
-    recordApplied(editor, `pill|${bgHex}|${opacity}`);
+    const key = `pill|${bgHex}|${opacity}`;
+    recordApplied(editor, key);
+    nextKeys.add(key);
   }
 
   // ── Apply Gutter dots ────────────────────────────────────────────────────
   for (const [severity, ranges] of gutterBatches) {
     const gutterType = getGutterType(severity, cfg.pillOpacity);
     editor.setDecorations(gutterType, ranges);
-    recordApplied(editor, `gutter|${toHex(SEVERITY_COLORS[severity])}|${cfg.pillOpacity}`);
+    const key = `gutter|${toHex(SEVERITY_COLORS[severity])}|${cfg.pillOpacity}`;
+    recordApplied(editor, key);
+    nextKeys.add(key);
   }
+
+  return nextKeys;
 }
 
 // --------------------------------------------------------------------------
@@ -386,14 +406,19 @@ function updateEditor(editor: vscode.TextEditor | undefined): void {
   const diags      = vscode.languages.getDiagnostics(editor.document.uri);
   const activeLine = editor.selection.active.line;
 
-  clearEditorDecorations(editor);
-
-  if (diags.length === 0) { return; }
+  if (diags.length === 0) {
+    clearEditorDecorations(editor);
+    return;
+  }
 
   const lineMap = buildLineMap(diags, cfg);
-  if (lineMap.size === 0) { return; }
+  if (lineMap.size === 0) {
+    clearEditorDecorations(editor);
+    return;
+  }
 
-  applyDecorations(editor, lineMap, activeLine, cfg);
+  const nextKeys = applyDecorations(editor, lineMap, activeLine, cfg);
+  clearStaleEditorDecorations(editor, nextKeys);
 }
 
 // --------------------------------------------------------------------------
@@ -442,13 +467,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.window.onDidChangeVisibleTextEditors(editors => {
       for (const editor of editors) { debouncedUpdate(editor); }
-    }),
-
-    vscode.workspace.onDidChangeTextDocument(e => {
-      const editor = vscode.window.visibleTextEditors.find(
-        ed => ed.document.uri.toString() === e.document.uri.toString()
-      );
-      if (editor) { debouncedUpdate(editor); }
     }),
 
     vscode.workspace.onDidChangeConfiguration(e => {
