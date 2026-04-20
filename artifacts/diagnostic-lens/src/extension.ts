@@ -138,7 +138,7 @@ function clearDecorationCache(): void {
 // --------------------------------------------------------------------------
 
 const editorApplied = new WeakMap<vscode.TextEditor, Set<string>>();
-const pendingClearTimers = new WeakMap<vscode.TextEditor, ReturnType<typeof setTimeout>>();
+const pendingClearVersions = new WeakMap<vscode.TextEditor, number>();
 
 function clearEditorDecorations(editor: vscode.TextEditor, nextKeys: Set<string> = new Set()): void {
   const keys = editorApplied.get(editor);
@@ -152,19 +152,16 @@ function clearEditorDecorations(editor: vscode.TextEditor, nextKeys: Set<string>
 }
 
 function cancelPendingClear(editor: vscode.TextEditor): void {
-  const timer = pendingClearTimers.get(editor);
-  if (!timer) { return; }
-  clearTimeout(timer);
-  pendingClearTimers.delete(editor);
+  pendingClearVersions.set(editor, (pendingClearVersions.get(editor) ?? 0) + 1);
 }
 
 function scheduleEditorClear(editor: vscode.TextEditor): void {
   cancelPendingClear(editor);
-  const timer = setTimeout(() => {
-    pendingClearTimers.delete(editor);
+  const version = pendingClearVersions.get(editor) ?? 0;
+  queueMicrotask(() => {
+    if ((pendingClearVersions.get(editor) ?? 0) !== version) { return; }
     clearEditorDecorations(editor);
-  }, 150);
-  pendingClearTimers.set(editor, timer);
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -417,26 +414,10 @@ function updateEditor(editor: vscode.TextEditor | undefined): void {
 }
 
 // --------------------------------------------------------------------------
-// Debounce
-// --------------------------------------------------------------------------
-
-function debounce<T extends unknown[]>(fn: (...args: T) => void, ms: number) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return (...args: T) => {
-    if (timer) { clearTimeout(timer); }
-    timer = setTimeout(() => fn(...args), ms);
-  };
-}
-
-// --------------------------------------------------------------------------
 // Extension lifecycle
 // --------------------------------------------------------------------------
 
 export function activate(context: vscode.ExtensionContext): void {
-  const debouncedUpdate = debounce((editor: vscode.TextEditor | undefined) => {
-    updateEditor(editor);
-  }, 80);
-
   // Initial pass
   for (const editor of vscode.window.visibleTextEditors) {
     updateEditor(editor);
@@ -446,29 +427,29 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.languages.onDidChangeDiagnostics(e => {
       for (const editor of vscode.window.visibleTextEditors) {
         if (e.uris.some(u => u.toString() === editor.document.uri.toString())) {
-          debouncedUpdate(editor);
+          updateEditor(editor);
         }
       }
     }),
 
     vscode.window.onDidChangeActiveTextEditor(editor => {
-      debouncedUpdate(editor);
+      updateEditor(editor);
     }),
 
     // Cursor movement → active line may change → pill content changes
     vscode.window.onDidChangeTextEditorSelection(e => {
-      debouncedUpdate(e.textEditor);
+      updateEditor(e.textEditor);
     }),
 
     vscode.window.onDidChangeVisibleTextEditors(editors => {
-      for (const editor of editors) { debouncedUpdate(editor); }
+      for (const editor of editors) { updateEditor(editor); }
     }),
 
     vscode.workspace.onDidChangeTextDocument(e => {
       const editor = vscode.window.visibleTextEditors.find(
         ed => ed.document.uri.toString() === e.document.uri.toString()
       );
-      if (editor) { debouncedUpdate(editor); }
+      if (editor) { updateEditor(editor); }
     }),
 
     vscode.workspace.onDidChangeConfiguration(e => {
