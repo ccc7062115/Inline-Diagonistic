@@ -9,6 +9,8 @@ interface DiagnosticConfig {
   enableWarnings: boolean;
   enableHints: boolean;
   enableInfo: boolean;
+  enableGlyphMarginDots: boolean;
+  glyphDotOpacity: number;
   pillTransparency: number;
   pillOpacity: number;
   maxMessageLength: number;
@@ -95,6 +97,10 @@ function toRgba(c: RGB, opacity: number): string {
   return `rgba(${c.r},${c.g},${c.b},${opacity})`;
 }
 
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
 // Default editor background (dark). Blending keeps pill subtle by default.
 const EDITOR_BG: RGB = { r: 30, g: 30, b: 30 };
 
@@ -168,8 +174,10 @@ function getConfig(): DiagnosticConfig {
     enableWarnings:   cfg.get<boolean>('enableWarnings', true),
     enableHints:      cfg.get<boolean>('enableHints', true),
     enableInfo:       cfg.get<boolean>('enableInfo', true),
-    pillTransparency: cfg.get<number>('pillTransparency', 0.15),
-    pillOpacity:      cfg.get<number>('pillOpacity', 0.9),
+    enableGlyphMarginDots: cfg.get<boolean>('enableGlyphMarginDots', true),
+    glyphDotOpacity:  clamp01(cfg.get<number>('glyphDotOpacity', 1)),
+    pillTransparency: clamp01(cfg.get<number>('pillTransparency', 0.15)),
+    pillOpacity:      clamp01(cfg.get<number>('pillOpacity', 0.9)),
     maxMessageLength: cfg.get<number>('maxMessageLength', 30),
   };
 }
@@ -240,9 +248,7 @@ function getPillType(pillBgHex: string, pillOpacity: number): vscode.TextEditorD
   const key = `pill|${pillBgHex}|${pillOpacity}`;
   return getOrCreate(key, () => ({
     after: {
-      // The textDecoration property is injected verbatim into CSS,
-      // allowing us to smuggle in border-radius and padding for the pill shape.
-      textDecoration: 'none; border-radius: 999px; padding: 1px 7px;',
+      textDecoration: 'none; border-radius: 999px; padding: 1px 7px; transition: opacity 180ms ease, background-color 180ms ease, color 180ms ease, margin 180ms ease, transform 180ms ease;',
       margin: '0 0 0 4px',
       fontStyle: 'normal',
       fontWeight: 'normal',
@@ -345,33 +351,47 @@ function applyDecorations(
       },
     });
 
-    // ── Gutter ───────────────────────────────────────────────────────────
-    if (!gutterBatches.has(dominant)) {
-      gutterBatches.set(dominant, []);
+    if (cfg.enableGlyphMarginDots) {
+      if (!gutterBatches.has(dominant)) {
+        gutterBatches.set(dominant, []);
+      }
+      gutterBatches.get(dominant)!.push({
+        range: new vscode.Range(line, 0, line, 0),
+      });
     }
-    // Gutter icons use a start-of-line range (character 0)
-    gutterBatches.get(dominant)!.push({
-      range: new vscode.Range(line, 0, line, 0),
-    });
   }
+
+  const previousKeys = new Set(editorApplied.get(editor.document.uri.toString()) ?? []);
+  const nextKeys = new Set<string>();
 
   // ── Apply Arrow ──────────────────────────────────────────────────────────
   const arrowType = getArrowType();
   editor.setDecorations(arrowType, arrowBatch);
-  recordApplied(editor, ARROW_KEY);
+  nextKeys.add(ARROW_KEY);
 
   // ── Apply Pills ──────────────────────────────────────────────────────────
   for (const [pillKey, { ranges, bgHex, opacity }] of pillBatches) {
     const pillType = getPillType(bgHex, opacity);
     editor.setDecorations(pillType, ranges);
-    recordApplied(editor, `pill|${bgHex}|${opacity}`);
+    nextKeys.add(`pill|${bgHex}|${opacity}`);
   }
 
   // ── Apply Gutter dots ────────────────────────────────────────────────────
   for (const [severity, ranges] of gutterBatches) {
-    const gutterType = getGutterType(severity, cfg.pillOpacity);
+    const gutterType = getGutterType(severity, cfg.glyphDotOpacity);
     editor.setDecorations(gutterType, ranges);
-    recordApplied(editor, `gutter|${toHex(SEVERITY_COLORS[severity])}|${cfg.pillOpacity}`);
+    nextKeys.add(`gutter|${toHex(SEVERITY_COLORS[severity])}|${cfg.glyphDotOpacity}`);
+  }
+
+  for (const staleKey of previousKeys) {
+    if (nextKeys.has(staleKey)) { continue; }
+    const dt = decorationCache.get(staleKey);
+    if (dt) { editor.setDecorations(dt, []); }
+  }
+
+  editorApplied.set(editor.document.uri.toString(), nextKeys);
+  for (const key of nextKeys) {
+    recordApplied(editor, key);
   }
 }
 
@@ -386,12 +406,16 @@ function updateEditor(editor: vscode.TextEditor | undefined): void {
   const diags      = vscode.languages.getDiagnostics(editor.document.uri);
   const activeLine = editor.selection.active.line;
 
-  clearEditorDecorations(editor);
-
-  if (diags.length === 0) { return; }
+  if (diags.length === 0) {
+    clearEditorDecorations(editor);
+    return;
+  }
 
   const lineMap = buildLineMap(diags, cfg);
-  if (lineMap.size === 0) { return; }
+  if (lineMap.size === 0) {
+    clearEditorDecorations(editor);
+    return;
+  }
 
   applyDecorations(editor, lineMap, activeLine, cfg);
 }

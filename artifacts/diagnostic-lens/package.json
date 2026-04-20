@@ -45,6 +45,18 @@
           "default": true,
           "description": "Show inline indicators for informational messages."
         },
+        "diagnosticLens.enableGlyphMarginDots": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show diagnostic dots in the glyph margin."
+        },
+        "diagnosticLens.glyphDotOpacity": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Visual opacity of glyph margin dots (0 = invisible, 1 = fully visible)."
+        },
         "diagnosticLens.pillTransparency": {
           "type": "number",
           "default": 0.15,
