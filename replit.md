@@ -13,6 +13,7 @@ A VS Code extension that adds inline pill-shaped diagnostic indicators.
 - **Build**: `pnpm run compile` (inside `artifacts/diagnostic-lens/`)
 - **Package**: `pnpm exec vsce package --no-dependencies --allow-missing-repository`
 - **Config namespace**: `diagnosticLens.*`
+- **Recent changes**: Diagnostic decorations now update immediately without debounce, track document line edits while diagnostics refresh, and expose `diagnosticLens.glyphDotOpacity` for live glyph margin dot opacity control.
 
 ## Stack
 

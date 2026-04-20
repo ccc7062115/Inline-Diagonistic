@@ -59,6 +59,13 @@
           "maximum": 1,
           "description": "Visual opacity of the pill element (0 = invisible, 1 = fully visible)."
         },
+        "diagnosticLens.glyphDotOpacity": {
+          "type": "number",
+          "default": 0.9,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Opacity of the diagnostic dots shown in the glyph margin (0 = invisible, 1 = fully visible)."
+        },
         "diagnosticLens.maxMessageLength": {
           "type": "number",
           "default": 30,
