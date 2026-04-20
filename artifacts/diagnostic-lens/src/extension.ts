@@ -137,32 +137,24 @@ function clearDecorationCache(): void {
 // Per-editor active decoration key tracking
 // --------------------------------------------------------------------------
 
-const editorApplied = new WeakMap<vscode.TextEditor, Set<string>>();
-const pendingClearVersions = new WeakMap<vscode.TextEditor, number>();
-const editorLineMaps = new WeakMap<vscode.TextEditor, LineMap>();
+/** Maps editor URI → set of cache keys currently applied to it */
+const editorApplied = new Map<string, Set<string>>();
 
-function clearEditorDecorations(editor: vscode.TextEditor, nextKeys: Set<string> = new Set()): void {
-  const keys = editorApplied.get(editor);
+function clearEditorDecorations(editor: vscode.TextEditor): void {
+  const uri = editor.document.uri.toString();
+  const keys = editorApplied.get(uri);
   if (!keys) { return; }
   for (const key of keys) {
-    if (nextKeys.has(key)) { continue; }
     const dt = decorationCache.get(key);
     if (dt) { editor.setDecorations(dt, []); }
   }
-  editorApplied.set(editor, nextKeys);
+  keys.clear();
 }
 
-function cancelPendingClear(editor: vscode.TextEditor): void {
-  pendingClearVersions.set(editor, (pendingClearVersions.get(editor) ?? 0) + 1);
-}
-
-function scheduleEditorClear(editor: vscode.TextEditor): void {
-  cancelPendingClear(editor);
-  const version = pendingClearVersions.get(editor) ?? 0;
-  queueMicrotask(() => {
-    if ((pendingClearVersions.get(editor) ?? 0) !== version) { return; }
-    clearEditorDecorations(editor);
-  });
+function recordApplied(editor: vscode.TextEditor, key: string): void {
+  const uri = editor.document.uri.toString();
+  if (!editorApplied.has(uri)) { editorApplied.set(uri, new Set()); }
+  editorApplied.get(uri)!.add(key);
 }
 
 // --------------------------------------------------------------------------
@@ -215,45 +207,6 @@ function buildLineMap(diags: readonly vscode.Diagnostic[], cfg: DiagnosticConfig
     if (!entry.severities.includes(diag.severity)) { entry.severities.push(diag.severity); }
   }
   return map;
-}
-
-function shiftLineMap(lineMap: LineMap, changes: readonly vscode.TextDocumentContentChangeEvent[]): LineMap {
-  let shifted = lineMap;
-  for (const change of changes) {
-    const oldLineSpan = change.range.end.line - change.range.start.line;
-    const newLineSpan = change.text.split(/\r\n|\r|\n/).length - 1;
-    const delta = newLineSpan - oldLineSpan;
-    if (delta === 0) { continue; }
-
-    const next: LineMap = new Map();
-    for (const [line, entry] of shifted) {
-      let nextLine = line;
-      if (line > change.range.end.line) {
-        nextLine = line + delta;
-      } else if (
-        delta > 0 &&
-        change.range.isEmpty &&
-        line === change.range.start.line &&
-        entry.diagnostics.some(diag => change.range.start.character <= diag.range.start.character)
-      ) {
-        nextLine = line + delta;
-      } else if (line > change.range.start.line) {
-        nextLine = Math.max(0, change.range.start.line);
-      }
-      if (!next.has(nextLine)) {
-        next.set(nextLine, { diagnostics: [], severities: [] });
-      }
-      const nextEntry = next.get(nextLine)!;
-      nextEntry.diagnostics.push(...entry.diagnostics);
-      for (const severity of entry.severities) {
-        if (!nextEntry.severities.includes(severity)) {
-          nextEntry.severities.push(severity);
-        }
-      }
-    }
-    shifted = next;
-  }
-  return shifted;
 }
 
 // End-of-line anchor range for a given line
@@ -324,18 +277,15 @@ function applyDecorations(
   lineMap: LineMap,
   activeLine: number,
   cfg: DiagnosticConfig
-): Set<string> {
+): void {
   // We batch ranges per style key to minimise decoration type count.
   //
   // Layer 1 – Arrow (" -> "):  one shared type, contentText set per-range
   // Layer 2 – Pill (dots/msg): one type per blended color, contentText per-range
   // Layer 3 – Gutter dot:      one type per severity (max 4)
 
-  cancelPendingClear(editor);
-
   type BatchEntry = { ranges: vscode.DecorationOptions[] };
 
-  const appliedKeys = new Set<string>();
   const arrowBatch: vscode.DecorationOptions[] = [];
 
   // pill batches keyed by pillBgHex|pillOpacity
@@ -408,24 +358,21 @@ function applyDecorations(
   // ── Apply Arrow ──────────────────────────────────────────────────────────
   const arrowType = getArrowType();
   editor.setDecorations(arrowType, arrowBatch);
-  appliedKeys.add(ARROW_KEY);
+  recordApplied(editor, ARROW_KEY);
 
   // ── Apply Pills ──────────────────────────────────────────────────────────
   for (const [pillKey, { ranges, bgHex, opacity }] of pillBatches) {
     const pillType = getPillType(bgHex, opacity);
     editor.setDecorations(pillType, ranges);
-    appliedKeys.add(`pill|${pillKey}`);
+    recordApplied(editor, `pill|${bgHex}|${opacity}`);
   }
 
   // ── Apply Gutter dots ────────────────────────────────────────────────────
   for (const [severity, ranges] of gutterBatches) {
     const gutterType = getGutterType(severity, cfg.pillOpacity);
     editor.setDecorations(gutterType, ranges);
-    appliedKeys.add(`gutter|${toHex(SEVERITY_COLORS[severity])}|${cfg.pillOpacity}`);
+    recordApplied(editor, `gutter|${toHex(SEVERITY_COLORS[severity])}|${cfg.pillOpacity}`);
   }
-
-  clearEditorDecorations(editor, appliedKeys);
-  return appliedKeys;
 }
 
 // --------------------------------------------------------------------------
@@ -439,42 +386,26 @@ function updateEditor(editor: vscode.TextEditor | undefined): void {
   const diags      = vscode.languages.getDiagnostics(editor.document.uri);
   const activeLine = editor.selection.active.line;
 
-  if (diags.length === 0) {
-    editorLineMaps.delete(editor);
-    scheduleEditorClear(editor);
-    return;
-  }
+  clearEditorDecorations(editor);
+
+  if (diags.length === 0) { return; }
 
   const lineMap = buildLineMap(diags, cfg);
-  if (lineMap.size === 0) {
-    editorLineMaps.delete(editor);
-    scheduleEditorClear(editor);
-    return;
-  }
+  if (lineMap.size === 0) { return; }
 
-  editorLineMaps.set(editor, lineMap);
   applyDecorations(editor, lineMap, activeLine, cfg);
 }
 
-function updateEditorFromCache(editor: vscode.TextEditor | undefined): void {
-  if (!editor) { return; }
-  const lineMap = editorLineMaps.get(editor);
-  if (!lineMap) {
-    updateEditor(editor);
-    return;
-  }
-  applyDecorations(editor, lineMap, editor.selection.active.line, getConfig());
-}
+// --------------------------------------------------------------------------
+// Debounce
+// --------------------------------------------------------------------------
 
-function shiftEditorForDocumentChange(
-  editor: vscode.TextEditor,
-  changes: readonly vscode.TextDocumentContentChangeEvent[]
-): void {
-  const lineMap = editorLineMaps.get(editor);
-  if (!lineMap) { return; }
-  const shifted = shiftLineMap(lineMap, changes);
-  editorLineMaps.set(editor, shifted);
-  applyDecorations(editor, shifted, editor.selection.active.line, getConfig());
+function debounce<T extends unknown[]>(fn: (...args: T) => void, ms: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return (...args: T) => {
+    if (timer) { clearTimeout(timer); }
+    timer = setTimeout(() => fn(...args), ms);
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -482,6 +413,10 @@ function shiftEditorForDocumentChange(
 // --------------------------------------------------------------------------
 
 export function activate(context: vscode.ExtensionContext): void {
+  const debouncedUpdate = debounce((editor: vscode.TextEditor | undefined) => {
+    updateEditor(editor);
+  }, 80);
+
   // Initial pass
   for (const editor of vscode.window.visibleTextEditors) {
     updateEditor(editor);
@@ -491,35 +426,35 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.languages.onDidChangeDiagnostics(e => {
       for (const editor of vscode.window.visibleTextEditors) {
         if (e.uris.some(u => u.toString() === editor.document.uri.toString())) {
-          updateEditor(editor);
+          debouncedUpdate(editor);
         }
       }
     }),
 
     vscode.window.onDidChangeActiveTextEditor(editor => {
-      updateEditorFromCache(editor);
+      debouncedUpdate(editor);
     }),
 
     // Cursor movement → active line may change → pill content changes
     vscode.window.onDidChangeTextEditorSelection(e => {
-      updateEditorFromCache(e.textEditor);
+      debouncedUpdate(e.textEditor);
     }),
 
     vscode.window.onDidChangeVisibleTextEditors(editors => {
-      for (const editor of editors) { updateEditor(editor); }
+      for (const editor of editors) { debouncedUpdate(editor); }
     }),
 
     vscode.workspace.onDidChangeTextDocument(e => {
-      for (const editor of vscode.window.visibleTextEditors) {
-        if (editor.document.uri.toString() === e.document.uri.toString()) {
-          shiftEditorForDocumentChange(editor, e.contentChanges);
-        }
-      }
+      const editor = vscode.window.visibleTextEditors.find(
+        ed => ed.document.uri.toString() === e.document.uri.toString()
+      );
+      if (editor) { debouncedUpdate(editor); }
     }),
 
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('diagnosticLens')) {
         clearDecorationCache();
+        editorApplied.clear();
         for (const editor of vscode.window.visibleTextEditors) {
           updateEditor(editor);
         }
@@ -530,4 +465,5 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   clearDecorationCache();
+  editorApplied.clear();
 }

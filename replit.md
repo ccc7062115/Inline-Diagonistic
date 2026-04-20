@@ -13,7 +13,6 @@ A VS Code extension that adds inline pill-shaped diagnostic indicators.
 - **Build**: `pnpm run compile` (inside `artifacts/diagnostic-lens/`)
 - **Package**: `pnpm exec vsce package --no-dependencies --allow-missing-repository`
 - **Config namespace**: `diagnosticLens.*`
-- **Workflow**: `Diagnostic Lens Watch` runs `pnpm --dir artifacts/diagnostic-lens run watch`
 
 ## Stack
 
